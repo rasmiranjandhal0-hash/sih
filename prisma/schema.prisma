@@ -1,0 +1,202 @@
+// Prisma schema for E-Commerce Marketplace Platform
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  SELLER
+  ADMIN
+}
+
+enum OrderItemStatus {
+  PENDING
+  PACKED
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  RETURNED
+  REFUNDED
+}
+
+enum EscrowStatus {
+  HELD
+  RELEASED
+  REFUNDED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  phone         String   @unique
+  role          Role
+  isVerified    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  // Relations
+  sellerProfile SellerProfile?
+  orders        Order[]  @relation("CustomerOrders")
+  reviews       Review[]
+}
+
+model SellerProfile {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  storeName           String
+  gstNumber           String?
+  bankAccount         String?
+  commissionRateOverride Float?   // Overrides platform commission rate for this seller
+  rating              Float    @default(0.0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  // Relations
+  user        User      @relation(fields: [userId], references: [id])
+  products    Product[] @relation("SellerProducts")
+  orders      Order[]   @relation("SellerOrders")
+  coupons     Coupon[]  @relation("SellerCoupons")
+}
+
+model Product {
+  id            String   @id @default(uuid())
+  title         String
+  description   String?
+  categoryId    String
+  brand         String?
+  sku           String   @unique
+  price         Float
+  compareAtPrice Float?
+  stock         Int      @default(0)
+  images        String[] // Array of image URLs
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  // Relations
+  seller        SellerProfile? @relation("SellerProducts", fields: [sellerId], references: [id])
+  sellerId      String?
+  variants      ProductVariant[] @relation("ProductVariants")
+  reviews       Review[]
+}
+
+model ProductVariant {
+  id          String   @id @default(uuid())
+  productId   String
+  // Attributes like size, color, etc. can be stored as JSON or separate table; for simplicity, we'll use a JSON field
+  attributes  Json
+  sku         String   @unique
+  price       Float
+  stock       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  // Relations
+  product     Product @relation("ProductVariants", fields: [productId], references: [id])
+  orderItems  OrderItem[] @relation("VariantOrderItems")
+}
+
+model Order {
+  id            String   @id @default(uuid())
+  customerId    String
+  sellerId      String   // The seller who fulfills the order (could be multiple sellers? We'll assume single seller per order for simplicity; for multi-seller, we'd have a junction table)
+  totalAmount   Float
+  status        String   // e.g., PENDING, CONFIRMED, etc. (we can use an enum but keeping string for flexibility)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  // Relations
+  customer      User     @relation("CustomerOrders", fields: [customerId], references: [id])
+  seller        SellerProfile @relation("SellerOrders", fields: [sellerId], references: [id])
+  orderItems    OrderItem[] @relation("OrderItems")
+  shippingAddress ShippingAddress? @relation("OrderShippingAddress")
+  escrowTransaction EscrowTransaction? @relation("OrderEscrow")
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  variantId   String
+  quantity    Int
+  unitPrice   Float    // Price at time of purchase
+  itemStatus  OrderItemStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  // Relations
+  order       Order @relation("OrderItems", fields: [orderId], references: [id])
+  variant     ProductVariant @relation("VariantOrderItems", fields: [variantId], references: [id])
+}
+
+model ShippingAddress {
+  id            String   @id @default(uuid())
+  orderId       String   @unique
+  fullName      String
+  phone         String
+  addressLine1  String
+  addressLine2  String?
+  city          String
+  state         String
+  postalCode    String
+  country       String
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  // Relations
+  order         Order @relation("OrderShippingAddress", fields: [orderId], references: [id])
+}
+
+model EscrowTransaction {
+  id            String   @id @default(uuid())
+  orderId       String   @unique
+  totalAmount   Float
+  platformCommission Float
+  sellerPayout  Float
+  status        EscrowStatus @default(HELD)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  // Relations
+  order         Order @relation("OrderEscrow", fields: [orderId], references: [id])
+}
+
+model Coupon {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  discountType    DiscountType
+  discountValue   Float    // Percentage or fixed amount
+  minOrderValue   Float    @default(0)
+  applicableSellerId String? // If null, applicable to all sellers; if set, only for this seller
+  validFrom       DateTime
+  validTo         DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  // Relations
+  seller          SellerProfile? @relation("SellerCoupons", fields: [applicableSellerId], references: [id])
+}
+
+model Review {
+  id              String   @id @default(uuid())
+  productId       String
+  customerId      String
+  rating          Int      @default(0)
+  comment         String?
+  isVerifiedPurchase Boolean @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  // Relations
+  product         Product @relation("ProductReviews", fields: [productId], references: [id])
+  customer        User    @relation("CustomerReviews", fields: [customerId], references: [id])
+}
+
+// Indexes for performance
+@@index([email], map: "user_email_idx")
+@@index([phone], map: "user_phone_idx")
+@@index([role], map: "user_role_idx")
+@@index([storeName], map: "seller_store_name_idx")
+@@index([sku], map: "product_sku_idx")
+@@index([sellerId], map: "product_seller_id_idx")
+@@index([orderId], map: "order_item_order_id_idx")
+@@index([variantId], map: "order_item_variant_id_idx")
